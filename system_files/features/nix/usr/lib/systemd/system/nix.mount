@@ -1,0 +1,19 @@
+# The root filesystem is read-only on bootc, and Nix refuses a symlinked /nix,
+# so the store lives in /var/nix and is bind-mounted here early in boot.
+# Being a local mount, this orders itself before local-fs.target, so tmpfiles
+# and nix-daemon.socket (RequiresMountsFor=/nix/store) see the writable store.
+[Unit]
+Description=Nix store (bind mount of /var/nix)
+Documentation=https://nix.dev/manual/nix/latest/
+Requires=nix-store-dir.service
+After=nix-store-dir.service
+RequiresMountsFor=/var
+
+[Mount]
+What=/var/nix
+Where=/nix
+Type=none
+Options=bind
+
+[Install]
+WantedBy=local-fs.target

@@ -1,0 +1,13 @@
+# A bind mount's source must exist before the mount. tmpfiles runs too late for
+# that (after local-fs.target), so create /var/nix here on the first boot.
+[Unit]
+Description=Create /var/nix for the Nix store bind mount
+DefaultDependencies=no
+RequiresMountsFor=/var
+Before=nix.mount
+ConditionPathIsDirectory=!/var/nix
+
+[Service]
+Type=oneshot
+# -Z: label it from the SELinux policy (same as /nix) rather than inheriting /var's label
+ExecStart=/usr/bin/mkdir -p -Z -m 0755 /var/nix
