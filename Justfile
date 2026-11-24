@@ -8,6 +8,10 @@ export image_logo_url := env_var("IMAGE_LOGO_URL")
 export default_tag := env_var("DEFAULT_TAG")
 export bib_image := env_var("BIB_IMAGE")
 
+# The rechunker (https://github.com/coreos/chunkah), pinned by digest. To update it, pick a
+# release and take its digest from https://quay.io/repository/coreos/chunkah?tab=tags
+chunkah_image := "quay.io/coreos/chunkah:v0.7.1@sha256:71e593421c5de7dcc7c8c5c50e98d3bac572055a76f399f61a491d123c20a523"
+
 alias build-vm := build-qcow2
 alias rebuild-vm := rebuild-qcow2
 
@@ -123,6 +127,7 @@ build $target_image $tag=default_tag:
         LABELS+=("--label" "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/${repo}/${GIT_SHA}/README.md")
         LABELS+=("--label" "org.opencontainers.image.documentation=https://raw.githubusercontent.com/${repo}/${GIT_SHA}/README.md")
         LABELS+=("--label" "org.opencontainers.image.source=https://github.com/${repo}/blob/${GIT_SHA}/Containerfile")
+        LABELS+=("--label" "org.opencontainers.image.revision=$(git rev-parse HEAD)")
         LABELS+=("--label" "org.opencontainers.image.url=https://github.com/${repo}/tree/${GIT_SHA}")
         LABELS+=("--label" "org.opencontainers.image.version=${tag}.$(date +%Y%m%d)-${GIT_SHA}")
     fi
@@ -147,13 +152,15 @@ build $target_image $tag=default_tag:
 
     podman build "${PODMAN_BUILD_ARGS[@]}" .
 
-# Split the image for smaller updates (New)!
+# Split the image for smaller updates, keeping its labels (used by CI)
 rechunk $target_image $tag=default_tag:
     #!/usr/bin/env bash
 
     set -xeuo pipefail
 
-    # TODO: pin chunkah image to hash once mature enough
+    # The image's config (labels, Env, Cmd) comes from `podman inspect` via --config.
+    # Labels removed below describe the base image's build, not this one: its ostree
+    # commit (pruned here), its rpm-ostree input hash and a Quay expiry setting.
     # You may run into space issues on github runners as we are making a
     # complete copy of the image, which likely has no shared layers, unless your
     # base image is also using chunkah
@@ -170,20 +177,21 @@ rechunk $target_image $tag=default_tag:
       --mount=type=image,src="${target_image}:${tag}",target=/chunkah \
       -v "${CHUNKAH_CONFIG_FILE}:/chunkah-config.json:ro,Z" \
       -v "${CHUNKAH_OUTPUT_DIR}:/run/out:Z" \
-      quay.io/coreos/chunkah:latest \
+      "{{ chunkah_image }}" \
       build \
       --verbose \
       --compressed \
       --max-layers 128 \
       --prune /sysroot/ \
       --label ostree.commit- --label ostree.final-diffid- \
+      --label rpmostree.inputhash- --label quay.expires-after- \
       --config /chunkah-config.json \
       --output oci:/run/out/chunked
 
     CHUNKED_IMAGE="$(podman pull "oci:${CHUNKAH_OUTPUT_DIR}/chunked")"
     podman tag "${CHUNKED_IMAGE}" "${target_image}:${tag}"
 
-# Split the image for smaller updates (Classical)!
+# Split the image for smaller updates (Classical). Drops the image's labels!
 ostree-rechunk $target_image $tag=default_tag:
     #!/usr/bin/env bash
 

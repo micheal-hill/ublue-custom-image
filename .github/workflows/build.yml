@@ -97,23 +97,27 @@ jobs:
             "${IMAGE_NAME}" \
             "${DEFAULT_TAG}"
 
-      # This is optional, this provides smaller delta updates
-      - name: Rechunk with rpm-ostree
+      # Needed on every build: the rechunk step checks the chunkah image's signature.
+      # Signing our image (below) still only happens on the default branch.
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          # be careful when upgrading major versions
+          cosign-release: 'v3.1.4'
+
+      # Split the image into layers for smaller delta updates. chunkah
+      # (https://github.com/coreos/chunkah) keeps the image's labels; the template's
+      # rpm-ostree rechunker (just ostree-rechunk) drops them.
+      - name: Rechunk with chunkah
         id: rechunk
         run: |
-          just ostree-rechunk \
+          cosign verify \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp '^https://github\.com/coreos/chunkah/' \
+            "$(just --evaluate chunkah_image)" > /dev/null
+          just rechunk \
             "${IMAGE_NAME}" \
             "${DEFAULT_TAG}"
-
-      # If you are feeling adventurous, use the new distro agnostic rechunker
-      # https://github.com/coreos/chunkah
-      # You can delete the Rechunk with rpm-ostree portion then if you use this
-      #- name: Rechunk with Chunkah
-      #  id: rechunk
-      #  run: |
-      #    just rechunk \
-      #      ${IMAGE_NAME} \
-      #      ${DEFAULT_TAG}
 
       - name: Generate Build Tags
         id: gen-build-tags
@@ -165,13 +169,7 @@ jobs:
       # your project for others to consume. You will need to create a public and private key
       # using Cosign and save the private key as a repository secret in Github for this workflow
       # to consume. For more details, review the image signing section of the README.
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-        with:
-          # be careful when upgrading major versions
-          cosign-release: 'v3.1.4'
-
+      # (Cosign is installed before the rechunk step.)
       - name: Sign container image
         id: sign-image
         if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
