@@ -1,0 +1,5 @@
+# actionlint 1.7.12 (2026-03) predates GitHub's ubuntu-26.04 hosted runner,
+# which the Universal Blue template uses. Declare it so the label isn't flagged.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04

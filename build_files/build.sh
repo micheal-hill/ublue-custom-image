@@ -1,27 +1,48 @@
 #!/bin/bash
+# Entry point run by the Containerfile. Applies the shared layer, then the
+# variant named by the VARIANT build arg, then each optional feature in
+# FEATURES. Variants never branch on GPU: the base image chosen in images.json
+# decides that.
 
-set -ouex pipefail
+set -xeuo pipefail
 
-# Copy the contents of system_files/ of the git repo to /
-cp -avf "/ctx/system_files"/. /
+: "${VARIANT:?VARIANT build arg is required (see images.json)}"
+: "${IMAGE_NAME:?IMAGE_NAME build arg is required}"
+: "${IMAGE_VENDOR:=localhost}"
+: "${FEATURES:=}"
+export VARIANT IMAGE_NAME IMAGE_VENDOR
 
-### Install packages
+if [[ ! -f "/ctx/variants/${VARIANT}.sh" ]]; then
+	echo "Unknown variant '${VARIANT}': no build_files/variants/${VARIANT}.sh" >&2
+	exit 1
+fi
+read -ra features <<<"${FEATURES}"
+for feature in "${features[@]}"; do
+	if [[ ! -f "/ctx/features/${feature}.sh" ]]; then
+		echo "Unknown feature '${feature}': no build_files/features/${feature}.sh" >&2
+		exit 1
+	fi
+done
 
-# Packages can be installed from any enabled yum repo on the image.
-# RPMfusion repos are available by default in ublue main images
-# List of rpmfusion packages can be found here:
-# https://mirrors.rpmfusion.org/mirrorlist?path=free/fedora/updates/43/x86_64/repoview/index.html&protocol=https&redirect=1
+# Overlay system_files/shared/, system_files/<variant>/ and system_files/features/<feature>/
+# onto the image. This happens before any package is installed: RPM keeps an existing file
+# at a %config path and writes its own version as .rpmnew, which the scripts then remove.
+layers=(shared "${VARIANT}")
+for feature in "${features[@]}"; do
+	layers+=("features/${feature}")
+done
+for layer in "${layers[@]}"; do
+	if [[ -d "/ctx/system_files/${layer}" ]]; then
+		cp -avf "/ctx/system_files/${layer}/." /
+	fi
+done
 
-# this installs a package from fedora repos
-dnf5 install -y tmux
+/ctx/common.sh
+"/ctx/variants/${VARIANT}.sh"
+for feature in "${features[@]}"; do
+	"/ctx/features/${feature}.sh"
+done
 
-# Use a COPR Example:
-#
-# dnf5 -y copr enable ublue-os/staging
-# dnf5 -y install package
-# Disable COPRs so they don't end up enabled on the final image:
-# dnf5 -y copr disable ublue-os/staging
-
-#### Example for enabling a System Unit File
-
-systemctl enable podman.socket
+# Leave /run and /var empty: bootc only applies /var at install time, and
+# `bootc container lint` flags leftovers from dnf and systemd-analyze
+rm -rf /run/dnf /run/systemd/systemd-units-load /var/lib/dnf

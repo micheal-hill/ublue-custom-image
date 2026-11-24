@@ -1,0 +1,17 @@
+[
+  {
+    "name": "bazzite-swayfx-nvidia",
+    "base": "ghcr.io/ublue-os/bazzite-nvidia:stable",
+    "variant": "swayfx",
+    "features": [
+      "nix"
+    ],
+    "description": "Bazzite with a SwayFX + Noctalia desktop (KDE Plasma kept as fallback) and Nix, on the NVIDIA LTS driver"
+  },
+  {
+    "name": "bazzite-bigscreen",
+    "base": "ghcr.io/ublue-os/bazzite-deck:stable",
+    "variant": "bigscreen",
+    "description": "Bazzite HTPC with KDE Plasma Bigscreen as the desktop-mode session"
+  }
+]
