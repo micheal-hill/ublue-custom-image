@@ -1,0 +1,4 @@
+[General]
+# Bigscreen defaults to the Aura browser, which isn't packaged for Fedora.
+# Open links in Bazzite's Firefox Flatpak instead.
+BrowserApplication=org.mozilla.firefox.desktop
