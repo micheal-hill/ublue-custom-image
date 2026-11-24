@@ -1,0 +1,11 @@
+# Starter Ghostty config, ported from the previous wezterm.lua.
+# Copied into new users' homes. List every option with `ghostty +show-config --default --docs`.
+
+font-family = FiraCode Nerd Font Mono
+# Lightweight dollar sign, regexp-match ligatures, dotted zero, old-style figures
+font-feature = ss04
+font-feature = ss07
+font-feature = zero
+font-feature = onum
+
+background-opacity = 0.9

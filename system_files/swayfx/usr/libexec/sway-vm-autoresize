@@ -1,0 +1,30 @@
+#!/bin/bash
+# Make sway follow the size of the VM viewer's window ("Auto resize VM with window" in
+# virt-manager). The virtual GPU reports the window size as the screen's new preferred
+# mode and sends a hotplug event. KDE and GNOME switch to that mode, but wlroots (which
+# sway is built on) keeps the current mode while the screen stays connected, so this
+# script applies it. Started by sway-vm-autoresize.service, which only runs in a VM.
+set -euo pipefail
+
+declare -A applied=()
+
+apply_preferred_modes() {
+	local conn name mode
+	for conn in /sys/class/drm/card*-Virtual-*; do
+		[[ -r "${conn}/modes" && "$(<"${conn}/status")" == connected ]] || continue
+		# The kernel lists the preferred mode first, e.g. "1920x1080"
+		read -r mode <"${conn}/modes" || continue
+		name=${conn##*/}
+		name=${name#card*-}
+		[[ "${applied[${name}]:-}" != "${mode}" ]] || continue
+		swaymsg -q -- output "${name}" mode --custom "${mode}" && applied[${name}]=${mode}
+	done
+}
+
+# Resizing the window sends a burst of events. Wait until they stop for half a second
+# (sway has re-read the screen's modes by then), then apply the latest size.
+while read -r line; do
+	[[ "${line}" == UDEV* ]] || continue
+	while read -r -t 0.5 _; do :; done
+	apply_preferred_modes
+done < <(udevadm monitor --udev --subsystem-match=drm)

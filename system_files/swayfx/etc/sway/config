@@ -1,0 +1,165 @@
+# System default SwayFX config for this image, with Noctalia as the desktop shell.
+#
+# sway reads ~/.config/sway/config instead of this file when it exists. To change only
+# a few things, add files to ~/.config/sway/config.d/*.conf. A file with the same name
+# as one included below replaces it, and an empty one disables it.
+# Reference: `man 5 sway`, plus https://github.com/wlrfx/swayfx for the effect directives.
+
+### Variables
+set $mod Mod4
+# Home row direction keys, like vim
+set $left h
+set $down j
+set $up k
+set $right l
+set $term ghostty
+# Fallback launcher in case Noctalia isn't running
+set $menu fuzzel
+set $ipc noctalia msg
+
+# Unlock KWallet with the login password. In Plasma, a systemd user unit tied to
+# plasma-workspace.target does this, and its XDG autostart entry is marked
+# X-systemd-skip, so nothing runs it under sway. It needs $PAM_KWALLET5_LOGIN, which
+# the PAM session hands to sway's environment, so run it straight from here.
+exec /usr/libexec/pam_kwallet_init
+
+### Shell: bar, launcher, notifications, lock screen, idle, wallpaper, OSD and clipboard
+exec noctalia
+# KDE's password dialog, the same one as in Plasma (instead of Fedora's lxqt-policykit)
+exec /usr/libexec/kf6/polkit-kde-authentication-agent-1
+
+### Input
+input type:touchpad {
+    dwt enabled
+    tap enabled
+    natural_scroll enabled
+    middle_emulation enabled
+}
+
+input type:keyboard {
+    xkb_options "caps:escape_shifted_capslock,compose:ralt"
+}
+
+### Key bindings
+# Noctalia launcher and settings
+bindsym $mod+space exec $ipc panel-toggle launcher
+bindsym $mod+comma exec $ipc settings-toggle
+bindsym $mod+d exec $menu
+
+# Volume and brightness through Noctalia (shows its on-screen display)
+bindsym --locked XF86AudioRaiseVolume exec $ipc volume-up
+bindsym --locked XF86AudioLowerVolume exec $ipc volume-down
+bindsym --locked XF86AudioMute exec $ipc volume-mute
+bindsym --locked XF86MonBrightnessUp exec $ipc brightness-up
+bindsym --locked XF86MonBrightnessDown exec $ipc brightness-down
+
+# Basics
+bindsym $mod+Shift+Return exec $term
+bindsym $mod+Shift+q kill
+# Drag floating windows with $mod + left button; resize with $mod + right button
+floating_modifier $mod normal
+bindsym $mod+Shift+c reload
+bindsym $mod+Shift+e exec swaynag -t warning -m 'You pressed the exit shortcut. Do you really want to exit sway? This will end your Wayland session.' -B 'Yes, exit sway' 'swaymsg exit'
+
+# Move focus
+bindsym $mod+$left focus left
+bindsym $mod+$down focus down
+bindsym $mod+$up focus up
+bindsym $mod+$right focus right
+bindsym $mod+Left focus left
+bindsym $mod+Down focus down
+bindsym $mod+Up focus up
+bindsym $mod+Right focus right
+
+# Move the focused window
+bindsym $mod+Shift+$left move left
+bindsym $mod+Shift+$down move down
+bindsym $mod+Shift+$up move up
+bindsym $mod+Shift+$right move right
+bindsym $mod+Shift+Left move left
+bindsym $mod+Shift+Down move down
+bindsym $mod+Shift+Up move up
+bindsym $mod+Shift+Right move right
+
+# Workspaces
+bindsym $mod+1 workspace number 1
+bindsym $mod+2 workspace number 2
+bindsym $mod+3 workspace number 3
+bindsym $mod+4 workspace number 4
+bindsym $mod+5 workspace number 5
+bindsym $mod+6 workspace number 6
+bindsym $mod+7 workspace number 7
+bindsym $mod+8 workspace number 8
+bindsym $mod+9 workspace number 9
+bindsym $mod+0 workspace number 10
+bindsym $mod+Shift+1 move container to workspace number 1
+bindsym $mod+Shift+2 move container to workspace number 2
+bindsym $mod+Shift+3 move container to workspace number 3
+bindsym $mod+Shift+4 move container to workspace number 4
+bindsym $mod+Shift+5 move container to workspace number 5
+bindsym $mod+Shift+6 move container to workspace number 6
+bindsym $mod+Shift+7 move container to workspace number 7
+bindsym $mod+Shift+8 move container to workspace number 8
+bindsym $mod+Shift+9 move container to workspace number 9
+bindsym $mod+Shift+0 move container to workspace number 10
+bindgesture swipe:left workspace next
+bindgesture swipe:right workspace prev
+
+# Layout
+bindsym $mod+b splith
+bindsym $mod+v splitv
+bindsym $mod+s layout stacking
+bindsym $mod+w layout tabbed
+bindsym $mod+e layout toggle split
+bindsym $mod+f fullscreen
+bindsym $mod+Shift+space floating toggle
+bindsym $mod+a focus parent
+
+# Scratchpad
+bindsym $mod+Shift+minus move scratchpad
+bindsym $mod+minus scratchpad show
+
+# Resize mode
+mode "resize" {
+    bindsym $left resize shrink width 10px
+    bindsym $down resize grow height 10px
+    bindsym $up resize shrink height 10px
+    bindsym $right resize grow width 10px
+    bindsym Left resize shrink width 10px
+    bindsym Down resize grow height 10px
+    bindsym Up resize shrink height 10px
+    bindsym Right resize grow width 10px
+    bindsym Return mode "default"
+    bindsym Escape mode "default"
+}
+bindsym $mod+r mode "resize"
+
+# Screenshots: full screen to the Pictures folder, a region to a file, or a region to the clipboard
+bindsym Print exec grim
+bindsym Shift+Print exec mkdir -p $HOME/Pictures/Screenshots && g=$(slurp -d) && [ -n "$g" ] && grim -g "$g" $HOME/Pictures/Screenshots/$(date +%Y%m%d%H%M%S).png
+bindsym Mod1+Shift+Print exec f=$(mktemp -t screenshot-XXXXXX.png) && g=$(slurp -d) && [ -n "$g" ] && grim -g "$g" "$f" && wl-copy < "$f" && rm -f "$f"
+bindsym Mod1+Shift+4 exec f=$(mktemp -t screenshot-XXXXXX.png) && g=$(slurp -d) && [ -n "$g" ] && grim -g "$g" "$f" && wl-copy < "$f" && rm -f "$f"
+
+xwayland enable
+
+### Included fragments, layered by file name: a later directory's file with the same name wins
+# /usr/share/sway/config.d (Fedora's and this image's):
+#   50-rules-*            floating rules for browser picture-in-picture, pavucontrol, polkit
+#   60-bindings-media     play/pause/next/previous keys (playerctl)
+#   65-mode-passthrough   a mode that passes every key to the focused window, e.g. a VM
+#   80-swayfx             borders, gaps and SwayFX effects
+#   85-gaming             idle inhibit for fullscreen games, tearing
+#   95-xdg-*              XDG autostart, XDG user folders
+# /etc/sway/config.d: Fedora's systemd session integration, plus anything an admin adds
+# ~/.config/sway/config.d: your own additions and overrides
+# Left out: Fedora's waybar, swayidle, volume and brightness fragments (Noctalia covers
+# them) and its lxqt-policykit autostart (KDE's agent starts above).
+include '$(/usr/libexec/sway/layered-include "/usr/share/sway/config.d/50-rules-*.conf" "/usr/share/sway/config.d/60-bindings-media.conf" "/usr/share/sway/config.d/65-mode-passthrough.conf" "/usr/share/sway/config.d/8[0-9]-*.conf" "/usr/share/sway/config.d/95-xdg-*.conf" "/etc/sway/config.d/*.conf" "${XDG_CONFIG_HOME:-$HOME/.config}/sway/config.d/*.conf")'
+
+# Window colours generated by Noctalia's sway theme template (skipped if the file doesn't exist)
+include $HOME/.config/sway/noctalia
+
+# Screen layout and workspace-to-screen assignments saved by Displays Settings
+# (nwg-displays), skipped until it has saved them
+include $HOME/.config/sway/outputs
+include $HOME/.config/sway/workspaces

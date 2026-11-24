@@ -1,0 +1,12 @@
+[Unit]
+Description=Resize the sway screen to fit the VM window
+Documentation=file:///usr/libexec/sway-vm-autoresize
+ConditionVirtualization=vm
+PartOf=sway-session.target
+After=sway-session.target
+
+[Service]
+ExecStart=/usr/libexec/sway-vm-autoresize
+
+[Install]
+WantedBy=sway-session.target

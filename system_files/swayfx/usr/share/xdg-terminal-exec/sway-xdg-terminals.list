@@ -1,0 +1,3 @@
+# Preferred terminals for xdg-terminal-exec in the SwayFX session (first one installed wins)
+com.mitchellh.ghostty.desktop
+org.kde.konsole.desktop
