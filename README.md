@@ -1,356 +1,314 @@
-# image-template
+# ublue-custom-image
 
-This repository is meant to be a template for building your own custom [bootc](https://github.com/bootc-dev/bootc) image. This template is the recommended way to make customizations to any image published by the Universal Blue Project.
+Two custom [Bazzite](https://bazzite.gg) images built from one repo with the
+[Universal Blue image-template](https://github.com/ublue-os/image-template):
 
-# Community
+| Image | Variant | Base image | Meant for |
+|---|---|---|---|
+| `bazzite-swayfx-nvidia` | SwayFX desktop with the Noctalia shell. KDE Plasma stays as a fallback session. Adds the `nix` feature | `ghcr.io/ublue-os/bazzite-nvidia:stable` (NVIDIA LTS 580 driver) | Desktop/laptop with an older NVIDIA GPU (tested target: Dell Precision 5510, Quadro M1000M) |
+| `bazzite-bigscreen` | KDE Plasma Bigscreen TV interface, with Steam Gaming Mode one step away | `ghcr.io/ublue-os/bazzite-deck:stable` (AMD/Intel) | Living-room HTPC |
 
-If you have questions about this template after following the instructions, try the following spaces:
-- [Universal Blue Forums](https://universal-blue.discourse.group/)
-- [Universal Blue Discord](https://discord.gg/8RZGC3uFzA)
-- [bootc discussion forums](https://github.com/bootc-dev/bootc/discussions) - This is not an Universal Blue managed space, but is an excellent resource if you run into issues with building bootc images.
+The research behind the design is in [discovery-docs/bazzite-custom-images/](discovery-docs/bazzite-custom-images/).
 
-# How to Use
+## How it works
 
-To get started on your first bootc image, simply read and follow the steps in the next few headings.
-If you prefer instructions in video form, TesterTech created an excellent tutorial, embedded below.
+```
+images.json ──► just build <image> ──► Containerfile (BASE_IMAGE, VARIANT, FEATURES build args)
+                                          └─► build_files/build.sh
+                                                ├─ copies system_files/shared/, system_files/<variant>/
+                                                │  and system_files/features/<feature>/
+                                                ├─ common.sh             (image identity + signing policy)
+                                                ├─ variants/<variant>.sh  (desktop packages + session wiring)
+                                                └─ features/<feature>.sh  (optional add-ons, e.g. nix)
+```
 
-[![Video Tutorial](https://img.youtube.com/vi/IxBl11Zmq5w/0.jpg)](https://www.youtube.com/watch?v=IxBl11Zmq5wE)
+- **`images.json` is the only place that pairs a base image with a variant and its features.** The
+  GPU base (`bazzite`, `bazzite-nvidia`, `bazzite-deck`, `bazzite-deck-nvidia`, …) is independent
+  of the variant's packages. Variant scripts never branch on GPU. They check that the base has what
+  they need (for example, Bigscreen needs a deck base with `steamosctl`) and fail the build clearly
+  if it doesn't.
+- **Features** are optional add-ons that don't depend on the desktop, listed in an entry's
+  `"features"` array. The only one so far is `nix`.
+- CI builds one job per `images.json` entry (see `.github/workflows/build.yml`).
 
-## Step 0: Prerequisites
+### Adding an image
 
-These steps assume you have the following:
-- A Github Account
-- A machine running a bootc image (e.g. Bazzite, Bluefin, Aurora, or Fedora Atomic)
-- Experience installing and using CLI programs
+Add an entry to `images.json`. For example, Bigscreen on a newer NVIDIA card:
 
-## Step 1: Preparing the Template
+```json
+{ "name": "bazzite-bigscreen-nvidia", "base": "ghcr.io/ublue-os/bazzite-deck-nvidia:stable",
+  "variant": "bigscreen", "description": "Bazzite HTPC with Plasma Bigscreen, NVIDIA open driver" }
+```
 
-### Step 1a: Copying the Template
+## Building locally
 
-Select `Use this Template` on this page. You can set the name and description of your repository to whatever you would like, but all other settings should be left untouched.
-
-Once you have finished copying the template, you need to enable the Github Actions workflows for your new repository.
-To enable the workflows, go to the `Actions` tab of the new repository and click the button to enable workflows.
-
-### Step 1b: Cloning the New Repository
-
-Here I will defer to the much superior GitHub documentation on the matter. You can use whichever method is easiest.
-[GitHub Documentation](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository)
-
-Once you have the repository on your local drive, proceed to the next step.
-
-## Step 2: Initial Setup
-
-### Step 2a: Creating a Cosign Key
-
-Container signing is important for end-user security and is enabled on all Universal Blue images. By default the image builds *will fail* if you don't.
-
-First, install the [cosign CLI tool](https://edu.chainguard.dev/open-source/sigstore/cosign/how-to-install-cosign/#installing-cosign-with-the-cosign-binary)
-With the cosign tool installed, run inside your repo folder:
+The build needs `podman`, `just` and `jq`. All three come preinstalled on Bazzite and other
+Universal Blue images.
 
 ```bash
-COSIGN_PASSWORD="" cosign generate-key-pair
+just build bazzite-swayfx-nvidia
+```
+```bash
+just build bazzite-bigscreen
 ```
 
-The signing key will be used in GitHub Actions and will not work if it is password protected.
+From inside a distrobox whose host lacks `jq`, there are two options:
+- Run `just` in the container and forward only `podman` to the host:
+  ```bash
+  mkdir -p ~/.local/hostbin && ln -sf /usr/bin/distrobox-host-exec ~/.local/hostbin/podman
+  ```
+  ```bash
+  PATH="$HOME/.local/hostbin:$PATH" just build bazzite-bigscreen
+  ```
+- Or, on a NixOS host, run `nix-shell -p jq --run 'just build bazzite-bigscreen'`.
 
-> [!WARNING]
-> Be careful to *never* accidentally commit `cosign.key` into your git repo. If this key goes out to the public, the security of your repository is compromised.
+## What each variant changes
 
-Next, you need to add the key to GitHub. This makes use of GitHub's secret signing system.
+**`bazzite-swayfx-nvidia`** ([build_files/variants/swayfx.sh](build_files/variants/swayfx.sh)):
+- **Packages:** one transaction installs:
+  - SwayFX (from Terra) with Fedora's `sway-config-fedora` and `sway-systemd`
+  - **Noctalia** (Fedora), the shell: bar, launcher, notifications, lock screen, idle, wallpaper,
+    on-screen display, clipboard, and network, Bluetooth and power controls
+  - **Ghostty** (Terra) as the terminal
+  - **Displays Settings** (nwg-displays, Terra) for resolution, scale, rotation and screen layout.
+    KDE's display settings can't drive sway, so its menu entry only shows in SwayFX. It won't
+    start without a `~/.config/sway` folder, so a per-user tmpfiles rule creates an empty one at
+    login. sway still uses the image's config until you add your own there
+  - fuzzel as a fallback launcher; neovim; grim and slurp; the wlr portal (screen sharing)
+  - fonts: Inter, Roboto, and the JetBrains Mono, FiraCode and Hack Nerd Fonts
 
-<details>
-    <summary>Using the Github Web Interface (preferred)</summary>
+  Terra is enabled for that transaction only and limited to the packages it supplies. Nothing
+  duplicates what the KDE base or Noctalia already provides:
+  - waybar, mako, rofi and the tray applets are left out (or not started), because Noctalia covers them.
+  - KDE's own apps work in SwayFX too: Dolphin, Konsole, the Bluetooth and audio pages of System
+    Settings, and the polkit password dialog. So there's no Nemo, blueman, pavucontrol or foot.
+- **Default config ([system_files/swayfx/etc/sway/config](system_files/swayfx/etc/sway/config)):**
+  - `exec noctalia`.
+  - Vim-style bindings. `Mod+Space` opens the Noctalia launcher, `Mod+d` opens fuzzel,
+    `Mod+Shift+Return` opens the terminal, and media and brightness keys go through Noctalia.
+  - Tap-to-click with natural scrolling; Caps Lock as Escape, with Shift+Caps for Caps Lock.
+  - Screenshots with grim and slurp, and swipe gestures to change workspace.
 
-Go to your repository settings, under `Secrets and Variables` -> `Actions`
-![image](https://user-images.githubusercontent.com/1264109/216735595-0ecf1b66-b9ee-439e-87d7-c8cc43c2110a.png)
-Add a new secret and name it `SIGNING_SECRET`, then paste the contents of `cosign.key` into the secret and save it. Make sure it's the .key file and not the .pub file. Once done, it should look like this:
-![image](https://user-images.githubusercontent.com/1264109/216735690-2d19271f-cee2-45ac-a039-23e6a4c16b34.png)
-</details>
-<details>
-<summary>Using the Github CLI</summary>
+  It also starts KDE's polkit agent and pulls in Fedora's floating rules, XDG autostart and systemd
+  session integration. It includes three files from `~/.config/sway/` when they exist: Noctalia's
+  generated colours (`noctalia`), and the screen layout and workspace assignments that Displays
+  Settings saves (`outputs`, `workspaces`).
+- **Overriding:** add files to `~/.config/sway/config.d/`. A file with the same name as a vendor
+  fragment replaces it, and an empty one turns it off, for example `80-swayfx.conf` (borders, gaps,
+  corners, shadows, dim, animations) or `85-gaming.conf`. A full `~/.config/sway/config` replaces
+  the whole default.
+- **One look and one set of apps in both sessions:**
+  - `QT_QPA_PLATFORMTHEME=kde` gives KDE apps under sway the same colours, icons, fonts and file
+    dialogs as in Plasma.
+  - The theme is Breeze. Change it once in KDE System Settings; that also sets the GTK theme.
+  - Dolphin opens folders in both sessions.
+  - Ghostty is SwayFX's terminal (`Mod+Shift+Return` and `xdg-terminal-exec`). Konsole stays KDE's
+    terminal, and Dolphin's "Open Terminal" follows KDE's default-terminal setting.
+  - Flatpak apps store secrets in KWallet. Fedora's sway portal config pointed at gnome-keyring,
+    which isn't installed. Plasma Login Manager unlocks KWallet at login in every session.
+- **New users** start with a Ghostty config in `/etc/skel` (FiraCode Nerd Font, 90% opacity).
+- **Environment:** `SWAY_UNSUPPORTED_GPU=true` stops sway's NVIDIA warning. On this laptop the Intel
+  iGPU drives every display, and the NVIDIA card only does render offload.
+- **In a virtual machine only:**
+  - `/etc/sway/environment` turns on wlroots' software cursor. QEMU's 3D-accelerated virtio-gpu
+    otherwise shows the pointer upside down and offset
+    ([QEMU issue 2315](https://gitlab.com/qemu-project/qemu/-/issues/2315)).
+  - `sway-vm-autoresize.service` resizes the screen to follow the viewer window. The virtual GPU
+    reports the new size, but wlroots ignores mode changes on a screen that stays connected.
+  - Both check `systemd-detect-virt` and do nothing on real hardware.
+- **Games on the NVIDIA GPU:** set a per-game Steam launch option of `switcherooctl launch %command%`.
+  Don't set PRIME variables globally for Steam: its X11 update UI crashes under sway's Xwayland
+  when they are set.
+- **Login screen:** **SwayFX is the default session.** The image sets Plasma Login Manager's
+  `[Greeter] PreselectedSession=sway.desktop` in `/usr/lib/plasmalogin/defaults.conf`. After a
+  user's first login, the greeter remembers that user's last choice, so picking Plasma once keeps
+  Plasma for them. KDE Plasma stays available as a fallback. To change the default, use *System
+  Settings → Login Screen*, which writes `/etc/plasmalogin.conf`.
+- **KWallet unlocks at login** in SwayFX too, as long as you log in with a password (autologin
+  can't unlock it) and the wallet's password is your login password. In Plasma a systemd unit
+  hands the login password over, but that unit is tied to the Plasma session. Its autostart
+  entry is marked `X-systemd-skip`, which Fedora's sway session honours. So the sway config runs
+  `/usr/libexec/pam_kwallet_init` itself.
 
-If you have the `github-cli` installed, run:
+**`bazzite-bigscreen`** ([build_files/variants/bigscreen.sh](build_files/variants/bigscreen.sh)):
+- **Packages:** installs `plasma-bigscreen` at exactly the base's Plasma version. The build fails if
+  the versions differ.
+- **Session wiring:** points Bazzite's deck "desktop mode" at Bigscreen in three places:
+  steamos-manager's `platform.toml`, `os-session-select`, and `bazzite-autologin`.
+- **Boot target:** ships `/etc/bazzite/desktop_autologin`, so a fresh install autologins into
+  Bigscreen instead of Gaming Mode.
+  - Change the default with `ujust`'s deck-session recipes, or
+    `steamosctl set-default-login-mode game|desktop`.
+  - Note: `bazzite-autologin` only writes `/etc/sddm.conf.d/zz-holo-autologin.conf` when it is
+    missing. A machine *rebased* from stock `bazzite-deck` will likely keep booting to Gaming Mode
+    until you switch the default login mode as above. This hasn't been tested yet.
+- **Steam tile:** switches to Gaming Mode instead of opening the desktop Steam client. The
+  OpenGamepadUI launcher is removed, because Bigscreen ignores hidden launchers.
+- **Audio and browser:** HDMI/DisplayPort audio is preferred as the default output. Links open in
+  Bazzite's Firefox Flatpak, because Aura isn't packaged for Fedora.
+
+## Features
+
+**`nix`** ([build_files/features/nix.sh](build_files/features/nix.sh)) adds the Nix package
+manager in multi-user daemon mode, for user environments with home-manager, devenv and nix-direnv.
+- Uses Fedora's own `nix` and `nix-daemon` packages. Flakes and `nix-command` are on, and members of
+  `wheel` are trusted users, so they can use extra binary caches such as devenv's.
+- **Where the store lives:** `/` is read-only on bootc and Nix refuses a symlinked `/nix`, so the
+  store lives in `/var/nix` and is bind-mounted onto `/nix` early in boot (`nix.mount`). It sits in
+  `/var`, so image updates and rollbacks don't touch it.
+- **SELinux labels:** Fedora's policy has no labels for `/nix`, and without them systemd can't create
+  the daemon socket. The image adds file-context rules:
+  - the store is labelled like `/usr`,
+  - `/nix/var` like `/var`,
+  - the socket directory like `/run`,
+  - and `/var/nix` gets the same labels as `/nix`.
+
+  tmpfiles fixes the top-level directories' labels on every boot. A store that was filled before
+  these rules existed needs a one-off `sudo restorecon -R /var/nix`.
+- **First run:** open a new login shell (the daemon profile scripts set `PATH`), then:
+  ```bash
+  nix run nixpkgs#hello
+  ```
+  ```bash
+  nix run home-manager/release-26.05 -- init --switch
+  ```
+- **home-manager on a non-NixOS system:**
+  - Set `targets.genericLinux.enable = true;`.
+  - For Nix-installed fonts, set `fonts.fontconfig.enable = true;`.
+  - Leave out what the image already ships (for example Noctalia and fish), so you don't end up
+    with two copies.
+  - Prefer Flatpak or image packages for GUI apps. Nix-built OpenGL/Vulkan apps can't find the
+    system GPU drivers without extra setup (see home-manager's `targets.genericLinux.gpu`).
+- **Distrobox:** containers only see the store if they are created with `--volume /nix:/nix:ro`.
+
+## Testing in a VM (virt-manager)
+
+bootc-image-builder turns a locally built image (from `just build <image>`) into a VM disk or an
+installer ISO. It needs rootful, privileged podman, so these recipes copy your image into root's
+podman storage and **ask for your sudo password**. Run them on the host, in a terminal, from this
+folder, **without** a `sudo` prefix. They need only `just`, `podman` and `sudo`; `jq` isn't required.
 
 ```bash
-gh secret set SIGNING_SECRET < cosign.key
+just build-qcow2 bazzite-bigscreen   # disk image → output/bazzite-bigscreen/qcow2/disk.qcow2
 ```
-</details>
-
-### Step 2b: Choosing Your Base Image
-
-To choose a base image, simply modify the line in the container file starting with `FROM`. This will be the image your image derives from, and is your starting point for modifications.
-For a base image, you can choose any of the Universal Blue images or start from a Fedora Atomic system. Below this paragraph is a dropdown with a non-exhaustive list of potential base images.
-
-<details>
-    <summary>Base Images</summary>
-
-- Bazzite: `ghcr.io/ublue-os/bazzite:stable`
-- Aurora: `ghcr.io/ublue-os/aurora:stable`
-- Bluefin: `ghcr.io/ublue-os/bluefin:stable`
-- Universal Blue Base: `ghcr.io/ublue-os/base-main:latest`
-- Fedora: `quay.io/fedora/fedora-bootc:44`
-
-You can find more Universal Blue images on the [packages page](https://github.com/orgs/ublue-os/packages).
-</details>
-
-If you don't know which image to pick, choosing the one your system is currently on is the best bet for a smooth transition. To find out what image your system currently uses, run the following command:
 ```bash
-sudo bootc status
-```
-This will show you all the info you need to know about your current image. The image you are currently on is displayed after `Booted image:`. Paste that information after the `FROM` statement in the Containerfile to set it as your base image.
-
-### Adding NVIDIA drivers
-
-The standalone `base-nvidia`, `silverblue-nvidia`, and `kinoite-nvidia` images have been retired following [ublue-os/main#927](https://github.com/ublue-os/main/issues/927). To add NVIDIA drivers to your own image, use the installer included in [akmods](https://github.com/ublue-os/akmods).
-
-For Silverblue on Fedora 44, keep the `ctx` stage in your `Containerfile` and replace the default Bazzite `FROM` line with:
-
-```dockerfile
-FROM ghcr.io/ublue-os/akmods-nvidia-open:main-44 AS nvidia-akmods
-FROM ghcr.io/ublue-os/silverblue-main:44
+just build-iso bazzite-bigscreen     # installer → output/bazzite-bigscreen/bootiso/install.iso
 ```
 
-Add the NVIDIA RPM mount to the existing `RUN` instruction:
+- **qcow2:** `build-qcow2` first asks for a **VM login username and password**. A
+  bootc-image-builder disk has no user account, and Bazzite has no first-run wizard. The answers go
+  into a temporary, owner-only, gitignored config that is deleted when the build finishes. Use a
+  throwaway password; it only exists inside that VM. On `bazzite-bigscreen`, this user becomes the
+  autologin user.
+- **ISO:** the installer asks for the user during installation.
+- **Disk space:** each disk image takes roughly 10–15 GB, and copying an image into root's storage
+  takes another ~12 GB. `just vm` uploads one more copy into libvirt's pool. Build one image at a
+  time. Between them, run `just clean` and `sudo podman rmi localhost/<image>`.
+- **One password prompt:** copying the image into root's storage, the build and the copy into
+  `output/` all run under one `sudo`. Each of them can take longer than sudo's 5-minute
+  password cache, so separate `sudo` calls would ask again partway through.
+- **Interrupted builds** can leave `_build-bib.*` or `_build_podman_scp.*` folders holding
+  root-owned files. Remove them with `sudo rm -rf _build-bib.* _build_podman_scp.*`.
 
-```dockerfile
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    --mount=type=cache,dst=/var/cache \
-    --mount=type=cache,dst=/var/log \
-    --mount=type=tmpfs,dst=/tmp \
-    --mount=type=bind,from=nvidia-akmods,source=/rpms,target=/tmp/akmods-rpms \
-    /ctx/build.sh
-```
-
-Then add this to the end of `build_files/build.sh` to install the drivers and rebuild the initramfs:
-
+**Create and start the VM** from the qcow2 (no sudo):
 ```bash
-IMAGE_NAME=silverblue /tmp/akmods-rpms/ublue-os/nvidia-install.sh
-
-KERNEL_VERSION="$(rpm -q --queryformat='%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)"
-export DRACUT_NO_XATTR=1
-dracut --no-hostonly --kver "$KERNEL_VERSION" --reproducible --add ostree \
-    -f "/usr/lib/modules/$KERNEL_VERSION/initramfs.img"
-chmod 0600 "/usr/lib/modules/$KERNEL_VERSION/initramfs.img"
+just vm bazzite-swayfx-nvidia
 ```
+- The recipe uploads the disk into libvirt's default storage pool (`/var/lib/libvirt/images`)
+  through libvirt itself, and starts libvirt's `default` network if it's stopped.
+- It then defines and boots `<image>-test` on `qemu:///system` with the settings below. That
+  includes OpenGL on the first non-NVIDIA render node, with UEFI and Secure Boot off.
+- Open virt-manager and double-click the VM to see its console.
+- **To start over with a new disk:** remove the old VM with
+  `virsh -c qemu:///system undefine <image>-test --nvram --remove-all-storage` (after a
+  `virsh destroy` if it's running), then rebuild the qcow2 and run `just vm` again.
 
-The base and akmods images must use the same Fedora release and exact kernel version. This example is for Universal Blue `*-main` images, not bases that already include NVIDIA drivers or use a custom kernel.
+**virt-manager settings,** which `just vm` applies for you, or for setting up a VM by hand:
+- **qcow2:** *New VM → Import existing disk image*, pointing at `disk.qcow2`.
+- **ISO:** *Local install media*, with a new empty 60 GB disk.
+- **Firmware:** UEFI (OVMF), without Secure Boot, because the image's kernel is signed with
+  Universal Blue's key. Set this under *Customize configuration before install → Overview*.
+- **CPU and RAM:** 4+ vCPUs and 8 GB RAM.
+- **Video:** Virtio, with *3D acceleration* ticked.
+- **Display:** Spice, with *Listen type: None* and *OpenGL* ticked.
+- **Screen follows the window:** in the VM console window, tick *View → Scale Display → Auto resize
+  VM with window*. This is a virt-manager setting, not part of the VM.
 
-Check [akmods hardware support](https://github.com/ublue-os/akmods#nvidia-hardware-support) before choosing a driver variant. With Secure Boot enabled, run `ujust enroll-secure-boot-key` on the installed system and complete enrollment at reboot.
+### What a VM can and can't show
 
-### Step 2c: Changing Names
+| | Testable in a VM | Needs real hardware |
+|---|---|---|
+| `bazzite-swayfx-nvidia` | SwayFX listed at login and starts. Noctalia's bar and launcher (`Mod+Space`); corners and shadows render; the pointer is the right way up, and the screen follows the window size; Displays Settings changes the resolution and keeps it after logging out and back in; Ghostty; Dolphin themed like in Plasma; a KDE password dialog (for example from `pkexec true`); portals; KDE fallback session (no second Bluetooth tray icon); `ujust`. Nix: `systemctl status nix.mount nix-daemon.socket`, then `nix run nixpkgs#hello`. Secrets: a Flatpak app that signs in should prompt for KWallet once | NVIDIA PRIME offload. The NVIDIA kernel modules won't load in a VM; that is expected. |
+| `bazzite-bigscreen` | Autologin into Bigscreen; navigation with keyboard (or a USB-passthrough controller); the Steam tile's behaviour | Steam Gaming Mode (gamescope is unreliable in VMs), HDMI audio, HDMI-CEC remotes |
 
-Change the `IMAGE_NAME` and `REPO_ORGANIZATION` variable inside the `image-template.env`
+- After an ISO install, check whether Bazzite's Flatpaks (the browser) were installed.
+- Inside KVM guests, Fedora's `start-sway` sets `WLR_RENDERER=pixman` (wlroots' software renderer)
+  and legacy KMS. SwayFX ignores the renderer setting and always draws with OpenGL, through virgl
+  in the VM. Hence the software cursor above.
 
-To commit and push all the files changed and added in step 2 into your Github repository:
+## Publishing and installing
+
+**CI** ([.github/workflows/build.yml](.github/workflows/build.yml)) builds every `images.json` entry
+in its own job.
+- **When it runs:** on each push to `main` (but not for changes only to READMEs or
+  `discovery-docs/`), every day at 10:05 UTC to pick up Bazzite updates, and on demand from
+  *Actions → Build container image → Run workflow*. Pull requests are built but never published.
+- **On `main`, each image is:**
+  - rechunked for smaller updates;
+  - pushed to `ghcr.io/micheal-hill/<image>` with the tags `latest`, `latest-<date>`, `<date>`, and
+    variants with the commit SHA;
+  - signed with cosign. The private key is the `SIGNING_SECRET` repository secret; the public key
+    is [keys/cosign.pub](keys/cosign.pub).
+- **Images built in CI trust that key for updates.** `common.sh` installs it with a
+  `sigstoreSigned` policy for `ghcr.io/micheal-hill`. Local builds (vendor `localhost`) skip this.
+- **After the first run:** open each package under the GitHub profile's *Packages* tab. If its
+  visibility is *Private*, change it to *Public* in *Package settings*, so machines can pull it
+  without logging in.
+
+**Check a published image's signature:**
 ```bash
-git add Containerfile image-template.env cosign.pub
-git commit -m "Initial Setup"
-git push
+cosign verify --key keys/cosign.pub ghcr.io/micheal-hill/bazzite-swayfx-nvidia:latest
 ```
-Once pushed, go look at the Actions tab on your Github repository's page.  The green checkmark should be showing on the top commit, which means your new image is ready!
 
-## Step 3: Switch to Your Image
+**Install on a machine** (not yet tested on hardware):
+1. Install stock Bazzite with the matching base. For `bazzite-swayfx-nvidia`, use the NVIDIA image
+   for GTX 9xx/10xx-era cards (`bazzite-nvidia`). For `bazzite-bigscreen`, use the HTPC/handheld
+   image (`bazzite-deck`). **On the laptop this replaces NixOS: back up first.**
+2. Switch to this image and reboot. Stock Bazzite doesn't know this repo's key yet, so this first
+   switch can't check the signature:
+   ```bash
+   sudo bootc switch ghcr.io/micheal-hill/bazzite-swayfx-nvidia:latest
+   ```
+3. Once booted into it, switch again with signature checks on. Every later update is then
+   verified:
+   ```bash
+   sudo bootc switch --enforce-container-sigpolicy ghcr.io/micheal-hill/bazzite-swayfx-nvidia:latest
+   ```
+4. `bootc status` should show the image. Updates then arrive through Bazzite's usual update
+   service, or with `ujust update`.
 
-From your bootc system, run the following command substituting in your Github username and image name where noted.
+**Alternatively, build an installer** that switches to the published image after installing:
 ```bash
-sudo bootc switch ghcr.io/<username>/<image_name>
+GITHUB_REPOSITORY_OWNER=micheal-hill just build-iso bazzite-swayfx-nvidia
 ```
-This should queue your image for the next reboot, which you can do immediately after the command finishes. You have officially set up your custom image! See the following section for an explanation of the important parts of the template for customization.
-
-# Repository Contents
-
-## Containerfile
-
-The [Containerfile](./Containerfile) defines the operations used to customize the selected image.This file is the entrypoint for your image build, and works exactly like a regular podman Containerfile. For reference, please see the [Podman Documentation](https://docs.podman.io/en/latest/Introduction.html).
-
-## build.sh
-
-The [build.sh](./build_files/build.sh) file is called from your Containerfile. It is the best place to install new packages or make any other customization to your system. There are customization examples contained within it for your perusal.
-
-## build.yml
-
-The [build.yml](./.github/workflows/build.yml) Github Actions workflow creates your custom OCI image and publishes it to the Github Container Registry (GHCR). By default, the image name will match the Github repository name.
-
-# Building Disk Images
-
-This template provides an out of the box workflow for creating disk images (ISO, qcow, raw) for your custom OCI image which can be used to directly install onto your machines.
-
-This template provides a way to upload the disk images that is generated from the workflow to a S3 bucket. The disk images will also be available as an artifact from the job, if you wish to use an alternate provider. To upload to S3 we use [rclone](https://rclone.org/) which is able to use [many S3 providers](https://rclone.org/s3/).
-
-## Setting Up ISO Builds
-
-The [build-disk.yml](./.github/workflows/build-disk.yml) Github Actions workflow creates a disk image from your OCI image by utilizing the [bootc-image-builder](https://osbuild.org/docs/bootc/). In order to use this workflow you must complete the following steps:
-
-1. Modify `disk_config/iso.toml` to point to your custom container image before generating an ISO image.
-2. If you changed your image name from the default in `build.yml` then in the `build-disk.yml` file edit the `IMAGE_REGISTRY`, `IMAGE_NAME` and `DEFAULT_TAG` environment variables with the correct values. If you did not make changes, skip this step.
-3. Finally, if you want to upload your disk images to S3 then you will need to add your S3 configuration to the repository's Action secrets. This can be found by going to your repository settings, under `Secrets and Variables` -> `Actions`. You will need to add the following
-  - `S3_PROVIDER` - Must match one of the values from the [supported list](https://rclone.org/s3/)
-  - `S3_BUCKET_NAME` - Your unique bucket name
-  - `S3_ACCESS_KEY_ID` - It is recommended that you make a separate key just for this workflow
-  - `S3_SECRET_ACCESS_KEY` - See above.
-  - `S3_REGION` - The region your bucket lives in. If you do not know then set this value to `auto`.
-  - `S3_ENDPOINT` - This value will be specific to the bucket as well.
-
-Once the workflow is done, you'll find the disk images either in your S3 bucket or as part of the summary under `Artifacts` after the workflow is completed.
-
-# Artifacthub
-
-This template comes with the necessary tooling to index your image on [artifacthub.io](https://artifacthub.io). Use the `artifacthub-repo.yml` file at the root to verify yourself as the publisher. This is important to you for a few reasons:
-
-- The value of artifacthub is it's one place for people to index their custom images, and since we depend on each other to learn, it helps grow the community. 
-- You get to see your pet project listed with the other cool projects in Cloud Native.
-- Since the site puts your README front and center, it's a good way to learn how to write a good README, learn some marketing, finding your audience, etc. 
-
-[Discussion Thread](https://universal-blue.discourse.group/t/listing-your-custom-image-on-artifacthub/6446)
-
-# Justfile Documentation
-
-The `Justfile` contains various commands and configurations for building and managing container images and virtual machine images using Podman and other utilities. It is also used inside Github Actions.
-
-## Required Utilities
-
-Container build:
-- [just](https://just.systems/man/en/introduction.html)
-- [podman](https://docs.podman.io/en/latest)
-- [jq](https://jqlang.org)
-
-These are usually preinstalled on Universal Blue's Bootc Images.
-
-Linting:
-- shfmt
-- shellcheck
-
-## Environment Variables
-
-These are all sourced from the `image-template.env` file.
-
-- `image_name`: The name of the image (default: "image-template").
-- `default_tag`: The default tag for the image (default: "latest").
-- `bib_image`: The Bootc Image Builder (BIB) image (default: "quay.io/centos-bootc/bootc-image-builder:latest").
-
-## Building The Image
-
-All these recipes will work (with default values) without supplying any arguments to them, e.g. `just build`
-
-### `just build`
-
-Builds a container image using Podman.
-
-```bash
-just build $target_image $tag
-```
-
-Arguments:
-- `$target_image`: The tag you want to apply to the image (default: `$image_name`).
-- `$tag`: The tag for the image (default: `$default_tag`).
-
-### Rechunking
-We can flatten the layers of container images to make sure there isn't a single huge layer when your image gets published.
-This does not make your image faster to download, just provides better resumability.
-
-#### `just ostree-rechunk`
-Rechunks the existing Image with [rpm-ostree](https://coreos.github.io/rpm-ostree/build-chunked-oci/)
-
-```bash
-just ostree-rechunk $target_image $tag
-```
-
-#### `just rechunk`
-Rechunks the existing Image with [chunkah](https://github.com/coreos/chunkah), this is probably gonna be the default here at some point, try it out, it's cool.
-
-```bash
-just rechunk $target_image $tag
-```
-
-### Switching to the locally built image for testing
-
-The image has to be in the containers-storage owned by root, to be able to rebase to it, see the `_rootful_load_image` recipe.
-
-`sudo just build` and `sudo just ostree-rechunk` builds directly as root and allows you to skip the transfer to the root containers-storage.
-
-You can rebase to all the images that are in your containers-storage:
-
-```
-sudo podman image list --filter=label=containers.bootc=1
-```
-
-See [man bootc switch](https://bootc.dev/bootc/man/bootc-switch.8.html) for more info.
-
-```
-sudo bootc switch --transport containers-storage localhost/myimage:latest
-```
-
-and reboot your system!
-
-## Building and Running Virtual Machines and ISOs
-
-The below commands all build QCOW2 images. To produce or use a different type of image, substitute in the command with that type in the place of `qcow2`. The available types are `qcow2`, `iso`, and `raw`.
-
-### `just build-qcow2`
-
-Builds a QCOW2 virtual machine image.
-
-```bash
-just build-qcow2 $target_image $tag
-```
-
-### `just rebuild-qcow2`
-
-Rebuilds a QCOW2 virtual machine image.
-
-```bash
-just rebuild-vm $target_image $tag
-```
-
-### `just run-vm-qcow2`
-
-Runs a virtual machine from a QCOW2 image.
-
-```bash
-just run-vm-qcow2 $target_image $tag
-```
-
-### `just spawn-vm`
-
-Runs a virtual machine using systemd-vmspawn.
-
-```bash
-just spawn-vm rebuild="0" type="qcow2" ram="6G"
-```
-
-## File Management
-
-### `just check`
-
-Checks the syntax of all `.just` files and the `Justfile`.
-
-### `just fix`
-
-Fixes the syntax of all `.just` files and the `Justfile`.
-
-### `just clean`
-
-Cleans the repository by removing build artifacts.
-
-### `just lint`
-
-Runs shell check on all Bash scripts.
-
-### `just format`
-
-Runs shfmt on all Bash scripts.
-
-## Additional resources
-
-For additional driver support, ublue maintains a set of scripts and container images available at [ublue-akmod](https://github.com/ublue-os/akmods). These images include the necessary scripts to install multiple kernel drivers within the container (Nvidia, OpenRazer, Framework...). The documentation provides guidance on how to properly integrate these drivers into your container image.
-
-## Community Examples
-
-These are images derived from this template (or similar enough to this template). Reference them when building your image!
-
-- [m2Giles' OS](https://github.com/m2giles/m2os)
-- [bOS](https://github.com/bsherman/bos)
-- [Homer](https://github.com/bketelsen/homer/)
-- [Amy OS](https://github.com/astrovm/amyos)
-- [VeneOS](https://github.com/Venefilyn/veneos)
+Without that variable, `build-iso` makes a local test installer that stays on the image it was
+built from. With it, run step 3 after the first update has installed the published image.
+
+### One-time setup on the Dell Precision 5510
+
+These steps are machine-specific, so they're done on the laptop rather than baked into the image.
+Both persist across image updates.
+- **Kernel arguments**, from the nixos-hardware profile for this model:
+  - `i915.enable_psr=0` stops panel flicker.
+  - `mem_sleep_default=deep` makes suspend use S3 sleep.
+  - `acpi_rev_override=1` is the Dell ACPI workaround for this model.
+
+  Reboot after running:
+  ```bash
+  sudo rpm-ostree kargs --append-if-missing=i915.enable_psr=0 --append-if-missing=mem_sleep_default=deep --append-if-missing=acpi_rev_override=1
+  ```
+- **Optional, log straight into SwayFX:** in `/etc/plasmalogin.conf`, under `[Autologin]`, set
+  `User=<your user>` and `Session=sway.desktop`. Without a typed password, KWallet stays
+  locked until something first asks for it.
+- **Virtual machines:** run `ujust setup-virtualization`, which enables libvirtd, installs the
+  virt-manager Flatpak and sets the needed kernel arguments.
