@@ -251,7 +251,7 @@ just vm bazzite-swayfx-nvidia
 **CI** ([.github/workflows/build.yml](.github/workflows/build.yml)) builds every `images.json` entry
 in its own job.
 - **When it runs:** on each push to `main` (but not for changes only to READMEs or
-  `discovery-docs/`), every day at 10:05 UTC to pick up Bazzite updates, and on demand from
+  `discovery-docs/`), every day at 18:24 UTC to pick up Bazzite updates, and on demand from
   *Actions → Build container image → Run workflow*. Pull requests are built but never published.
 - **On `main`, each image is:**
   - rechunked for smaller updates;
