@@ -254,11 +254,14 @@ in its own job.
   `discovery-docs/`), every day at 18:24 UTC to pick up Bazzite updates, and on demand from
   *Actions → Build container image → Run workflow*. Pull requests are built but never published.
 - **On `main`, each image is:**
-  - rechunked for smaller updates;
+  - rechunked for smaller updates with [chunkah](https://github.com/coreos/chunkah), after CI checks
+    the chunkah image's signature. Unlike the template's rpm-ostree rechunker, chunkah keeps the
+    image's labels (version, source commit, description), so `bootc status` shows the version;
   - pushed to `ghcr.io/micheal-hill/<image>` with the tags `latest`, `latest-<date>`, `<date>`, and
     variants with the commit SHA;
-  - signed with cosign. The private key is the `SIGNING_SECRET` repository secret; the public key
-    is [keys/cosign.pub](keys/cosign.pub).
+  - signed with cosign. The private key is the `SIGNING_SECRET` secret of the `publish`
+    environment, which only the `main` branch can use, so pull requests and other branches build
+    without it. The public key is [keys/cosign.pub](keys/cosign.pub).
 - **Images built in CI trust that key for updates.** `common.sh` installs it with a
   `sigstoreSigned` policy for `ghcr.io/micheal-hill`. Local builds (vendor `localhost`) skip this.
 - **After the first run:** open each package under the GitHub profile's *Packages* tab. If its
