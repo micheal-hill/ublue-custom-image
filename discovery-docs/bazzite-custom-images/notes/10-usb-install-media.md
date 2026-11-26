@@ -288,12 +288,55 @@ the copy. Our own changes would be small: `iso.yaml` (label and entry names; the
 - Lengthening `timestamp_timeout` or `passwd_timeout` would be a host config change, and the
   prompt would still come partway through.
 
-**Testing:** boot the ISO in a UEFI VM, optionally with a Secure Boot OVMF to check signed boot and
-the MOK request, and install to an empty disk. Then check:
-- `bootc status` shows a signed `ghcr.io/micheal-hill/bazzite-swayfx-nvidia:latest`;
-- the SwayFX session starts;
-- the Flatpaks are present;
-- the kernel is Bazzite's.
+**Testing in a VM (2026-11-26), with the run 2 ISO:**
+- **VM:** libvirt, UEFI, 4 vCPU, 8 GB RAM, an empty 50 GB virtio disk, and the ISO as a SATA
+  CD-ROM. Secure Boot was off, because this host's OVMF has no firmware with enrolled keys, so
+  signed boot and the MOK request weren't tested.
+- **Live session:**
+  - Booted Fedora's kernel (7.3.4-300.fc45) with `root=live:CDLABEL=<label>`, into the `liveuser`
+    KDE session with the welcome dialog.
+  - The payload was in containers-storage, with 11 Flatpak apps (40 refs), our signature policy,
+    and the expected kickstart lines.
+- **Install:** finished in about 26 minutes. Anaconda shows "Deployment starting" with no
+  progress for most of that, and the user thought it was stuck.
+
+  | Minutes in | Step |
+  |---|---|
+  | 0–2 | Partitioning (btrfs root, ext4 `/boot`, EFI) |
+  | 2–22 | Importing the image from containers-storage, then the ostree checkout (17 s) and composefs (24 s) |
+  | 23 | `bootc switch --mutate-in-place` to `ostree-image-signed:docker://ghcr.io/micheal-hill/bazzite-swayfx-nvidia:latest` |
+  | 23–25 | Flatpak rsync, 7.5 GB at about 57 MB/s |
+  | 26 | `restorecon`, then the MOK step: "This system doesn't support Secure Boot"; "Installation successfully finished" |
+
+  The import is slow because every file comes out of the zstd-19 squashfs on an emulated CD drive,
+  and ostree checksums about 280,000 files. A USB stick will probably be faster (not measured).
+  Attaching the ISO as a virtio disk might speed up VM tests.
+- **Installed system, after rebooting:**
+  - Boots Bazzite's kernel (`6.18.64-ogc1.1.fc45`) from the disk, btrfs root (`subvol=root`).
+  - The deployment's `.origin` is
+    `container-image-reference=ostree-image-signed:docker://ghcr.io/micheal-hill/bazzite-swayfx-nvidia:latest`,
+    so updates are signature-checked. Two deployments have the same commit; the cause wasn't
+    checked.
+  - `policy.json` has the `sigstoreSigned` entry for `ghcr.io/micheal-hill` with
+    `/etc/pki/containers/micheal-hill.pub`, and registries.d enables sigstore attachments.
+  - `image-info.json` has our name, vendor and ref (version 45.20261123.1). `image-tag` and
+    `image-branch` are still Bazzite's `stable`; only the MOTD and fastfetch banners show them.
+  - The greeter offers `sway.desktop` and `plasma.desktop`. Logging in to SwayFX worked: the
+    user's runtime folder had `sway-ipc.<uid>.<pid>.sock`, `wayland-1` and Noctalia's sockets.
+    Our `/usr/lib/environment.d/90-swayfx.conf` and `/usr/share/sway/config.d/` files are present.
+  - All 11 Flatpak apps and 29 runtimes from the stick are in `/var/lib/flatpak` (40 refs, as in
+    the live session).
+- **Guest agent caveats on the installed system:**
+  - SELinux is enforcing (the live session had `enforcing=0`). `qemu-ga` runs as
+    `virt_qemu_ga_t`, so it can't run `bootc` or `rpm-ostree`, list other processes, or read
+    `/sys/fs/selinux/enforce`, `/run/systemd/sessions` or `/var/lib/plasmalogin`. Read the
+    deployment's `.origin` file and `/run/user/<uid>/` instead.
+  - libvirt rejects a reply over 10 MB, then reports "QEMU guest agent is not available due to an
+    error". A `du` over `/var/lib/flatpak` that printed a permission error per file did this.
+    Rebooting the guest (`virsh reboot --mode acpi`) only changed the error to "didn't respond to
+    synchronization within '5' seconds". Restarting `qemu-guest-agent` inside the guest fixed it.
+    Keep output small.
+  - `virsh screenshot` fails with "no surface" with Spice GL, even with a viewer attached.
 
 ## State on 2026-11-25
 

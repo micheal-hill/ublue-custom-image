@@ -343,7 +343,9 @@ sudo dd if=output/bazzite-swayfx-nvidia/live-iso/bazzite-swayfx-nvidia-live.iso 
 
 **Install:**
 1. Boot from the stick and pick *Install bazzite-swayfx-nvidia*.
-2. Install from the welcome dialog.
+2. Install from the welcome dialog. After "Deployment starting" the installer shows no progress
+   while it copies the system off the stick: about 20 minutes in a test VM, out of 26 for the
+   whole install. It isn't stuck.
 3. With Secure Boot on, the first reboot shows a blue MokManager screen. Choose *Enroll MOK* and
    enter the password `universalblue` to trust Universal Blue's kernel key.
 4. `bootc status` should then show the signed `ghcr.io/micheal-hill/<image>:latest`.
