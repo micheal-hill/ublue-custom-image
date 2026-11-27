@@ -338,6 +338,79 @@ the copy. Our own changes would be small: `iso.yaml` (label and entry names; the
     Keep output small.
   - `virsh screenshot` fails with "no surface" with Spice GL, even with a viewer attached.
 
+## Copies vs git submodules for live_iso/ (2026-11-27)
+
+The question was whether submodules would keep upstream's file history, where copies don't.
+Sizes are from the GitHub API:
+
+| Upstream | Repo history | Tree at our pin | What we use |
+|---|---|---|---|
+| ublue-os/bazzite @ `eea6eb03` | ~309 MB | 716 files, 135 MB | `installer/`: 29 files, plus `LICENSE` |
+| ublue-os/titanoboa @ `5c457c3d` | ~0.1 MB | 24 files | `build_iso.sh` |
+
+- **Submodules would work.** Point them at the same commits, ideally with `shallow = true` in
+  `.gitmodules`, and have the recipe copy `live_iso/bazzite/installer/.` and fail clearly when the
+  submodule isn't checked out. The image CI isn't affected: it doesn't build the ISO, and
+  `actions/checkout` skips submodules by default.
+- **Against submodules:**
+  - **Review.** A bump shows in a PR as a one-line commit change. Upstream's compare view mixes the
+    installer's changes with all of Bazzite's other work, so the reviewer has to filter by
+    `installer/`. With copies, the PR diff is exactly what changes in the files the build runs.
+    That fits the `protect-main` review rule and UPSTREAM.md's aim that "everything the build runs
+    is reviewed in this repo".
+  - **Size.** The Bazzite submodule checks out 135 MB (716 files) to use 29. Even a shallow clone
+    downloads that tree, and `.gitmodules` can't declare a sparse checkout.
+  - **Self-contained.** Building needs `git clone --recurse-submodules` or
+    `git submodule update --init`. GitHub's source archives leave submodules empty. `git pull` and
+    branch switches don't move the submodule unless `submodule.recurse` is set. The build depends on
+    the pinned commit staying fetchable upstream.
+  - **Patching.** Changing upstream files would need a fork or patch files applied at build time.
+    We don't patch them today, since our changes live in separate files.
+- **For submodules:**
+  - The pin is machine-readable, and updating is a checkout plus a commit.
+  - Dependabot's `gitsubmodule` ecosystem, or Renovate's `git-submodules` manager (which has to be
+    enabled), could propose bumps.
+  - No licence files need copying.
+- **The history isn't lost with copies.** It stays upstream, and UPSTREAM.md pins the commit, so
+  `https://github.com/ublue-os/bazzite/commits/<sha>/installer` shows it. What's missing is
+  `git log` and `git blame` inside this repo.
+- **`git subtree`** can bring that history in. It would mean `git subtree split --prefix=installer`
+  on a full Bazzite clone, then `subtree add` or `merge` here, redone for every update. That's heavy
+  for 30 files, and a split of `installer/` alone doesn't include the `LICENSE` file.
+
+**Decision (2026-11-27): submodules.** The user chose them over copies, and the unpushed `live-iso`
+branch was rebuilt so the copies never reached GitHub.
+- **Setup.** Both repos are submodules at `live_iso/bazzite` and `live_iso/titanoboa`, at the same
+  commits as the copies, with `shallow = true` and `branch = main`.
+  - The first `git submodule add --depth 1` fetched about 100 MB of git data for Bazzite, and the
+    checkout is 140 MB.
+  - Fetching a pinned commit that isn't the branch tip worked with `fetch --depth 1 origin <sha>`.
+    GitHub serves commits by SHA.
+  - **`shallow = true` isn't enough.** In a fresh clone (git 2.56), `git submodule update --init`
+    shallow-cloned Bazzite's `main` tip, then fetched `eea6eb03` without a depth limit: 8,930
+    commits and 305 MB in `.git/modules`.
+  - With `git submodule update --init --depth 1` it was one commit and 102 MB, in 13 s. The recipe
+    and UPSTREAM.md use `--depth 1`.
+- **Our recipes.**
+  - `just build-live-iso` runs `git submodule update --init live_iso/bazzite live_iso/titanoboa`
+    when either is missing, without `--recursive`, since Bazzite has nested submodules (GNOME
+    extensions).
+  - `build-info.txt` records both commits.
+  - `lint`, `format`, `check` and `fix` list files with `git ls-files`, so they don't touch
+    upstream code.
+- **Review mitigation.** `live_iso/UPSTREAM.md` gives the commands to diff only the files the build
+  uses (`git diff <old> <new> -- installer/`).
+- **Dependabot** (GitHub docs, read 2026-11-27):
+  - The ecosystem is `gitsubmodule` and `monthly` is a valid interval; we use `directory: "/"`.
+  - It "tracks the latest commit on the configured branch". There's no version comparison, and it
+    follows a tag's commit if the submodule tracks a tag.
+  - The docs don't say whether "configured branch" means the `.gitmodules` `branch` or the default
+    branch. Both are `main` here.
+  - The docs don't give the `allow`/`ignore` dependency-name format for submodules (path or URL).
+  - Each bump PR also runs both image builds, since `pull_request` has no `paths-ignore`.
+- **To do:** look into having Claude review Dependabot's submodule PRs automatically, summarising
+  the `installer/` and `build_iso.sh` diff.
+
 ## State on 2026-11-25
 
 - **The `build-iso` path has never been tested,** in a VM or on hardware.
