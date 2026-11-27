@@ -28,7 +28,8 @@ images:
 [group('Just')]
 check:
     #!/usr/bin/env bash
-    find . -type f -name "*.just" | while read -r file; do
+    # git ls-files: this repo's files only, not the upstream code in the live_iso/ submodules
+    git ls-files --cached --others --exclude-standard -- '*.just' | while read -r file; do
     	echo "Checking syntax: $file"
     	just --unstable --fmt --check -f $file
     done
@@ -39,7 +40,7 @@ check:
 [group('Just')]
 fix:
     #!/usr/bin/env bash
-    find . -type f -name "*.just" | while read -r file; do
+    git ls-files --cached --others --exclude-standard -- '*.just' | while read -r file; do
     	echo "Checking syntax: $file"
     	just --unstable --fmt -f $file
     done
@@ -488,8 +489,8 @@ lint:
         echo "shellcheck could not be found. Please install it."
         exit 1
     fi
-    # Run shellcheck on all Bash scripts
-    find . -iname "*.sh" -type f -exec shellcheck "{}" ';'
+    # Run shellcheck on this repo's Bash scripts (not the upstream code in the live_iso/ submodules)
+    git ls-files -z --cached --others --exclude-standard -- '*.sh' | xargs -0 -r shellcheck
 
 # Runs shfmt on all Bash scripts
 format:
@@ -500,5 +501,5 @@ format:
         echo "shfmt could not be found. Please install it."
         exit 1
     fi
-    # Run shfmt on all Bash scripts
-    find . -iname "*.sh" -type f -exec shfmt --write "{}" ';'
+    # Run shfmt on this repo's Bash scripts (not the upstream code in the live_iso/ submodules)
+    git ls-files -z --cached --others --exclude-standard -- '*.sh' | xargs -0 -r shfmt --write
