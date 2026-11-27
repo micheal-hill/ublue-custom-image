@@ -248,11 +248,32 @@ the copy. Our own changes would be small: `iso.yaml` (label and entry names; the
       way. That's an inference, not tested.
     - A broader `bwrap --unshare-all --proc /proc` failed with "Can't mount proc on /proc:
       Operation not permitted". Flatpak doesn't use those options.
-  - **Not yet tested rootless:**
-    - the full payload pull (~13 GB, 128 layers) inside the build;
-    - the kernel swap and the `anaconda-live` install;
-    - Titanoboa's `build_iso.sh` (an image mount, `mksquashfs`, `xorriso`). Its `main.sh` hard-codes
-      `sudo podman run`, so we'd run that command ourselves without sudo.
+  - **Full builds of `just build-live-iso bazzite-swayfx-nvidia` (2026-11-25, rootless, on the host):**
+    - **Run 1 (`podman build`):** all of `build.sh` succeeded in 17 minutes: the signature-checked
+      payload pull, the Flatpaks, the kernel swap, Anaconda and dracut. Committing the step then
+      failed: "writing blob: storing blob to file /var/tmp/container_images_storage…/1: no space
+      left on device", with 54 GB free and stock Bazzite already pulled.
+      - A commit writes the container's changes out as an uncompressed tar blob, then unpacks it
+        into a new layer. So it briefly needs the container's changes, the blob and the new layer:
+        about three copies.
+      - The layer must have been over ~27 GB. Bazzite's Flatpak list pulls in two Freedesktop
+        runtimes (25.08 and 26.08), GNOME Platform 49, 50 and 51, KDE 6.11, codecs, and GL and
+        VAAPI extensions, on top of the ~13 GB payload.
+      - Flatpak also installed `GL.nvidia-580-178-04` and `GL32.nvidia-580-178-04`, matching the
+        build host's NVIDIA driver.
+    - **Fix:** no `podman build`. `live_iso/build-live-root.sh` runs `build.sh` in a plain
+      container (`podman run --name <image>-live-root`). Titanoboa's step then reads that container
+      through `podman unshare` + `podman mount`, passed as `-v <mount>:/rootfs:ro`; a small test
+      confirmed this works rootless. `FLATPAK_GL_DRIVERS=default` stops the host-specific NVIDIA
+      extensions.
+    - **Run 2:** succeeded in 16 minutes: 10 for the live system, 6 for `mksquashfs` (zstd -19)
+      and `xorriso`.
+      - The ISO is 8.8 GiB (9,447,417,856 bytes), so a 16 GB stick is enough.
+      - Free space went from 54 GB to 45 GB, ISO included, once the container was removed.
+      - The log has no "Error running trigger" lines. One Fedora mirror connection reset was
+        retried.
+      - The payload digest was recorded:
+        `sha256:5033e821e4ccdbdd4b9e2329a54b7ce2a1b8e8338fcc0e054763524d6a49e095`.
 - **`sudo just <recipe>`.** The password prompt comes first, before anything starts, and the rest
   runs as root with no further prompts.
   - Caveats:

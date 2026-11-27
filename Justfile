@@ -12,6 +12,10 @@ export bib_image := env_var("BIB_IMAGE")
 # release and take its digest from https://quay.io/repository/coreos/chunkah?tab=tags
 chunkah_image := "quay.io/coreos/chunkah:v0.7.1@sha256:71e593421c5de7dcc7c8c5c50e98d3bac572055a76f399f61a491d123c20a523"
 
+# The container Titanoboa's build_iso.sh runs in for `just build-live-iso`, pinned by digest
+# (Fedora 45; the script installs its own tools with dnf)
+live_iso_builder := "quay.io/fedora/fedora:45@sha256:92837d4834c1cff45cc2d534b655489b8e536271de1897932117e396cc9980c5"
+
 alias build-vm := build-qcow2
 alias rebuild-vm := rebuild-qcow2
 
@@ -397,6 +401,151 @@ rebuild-qcow2 $image $tag=default_tag: (_disk-config image) && (_rebuild-bib ("l
 # Rebuild the container image, then an Anaconda installer ISO
 [group('Build Virtual Machine Image')]
 rebuild-iso $image $tag=default_tag: (_iso-config image tag) && (_rebuild-bib ("localhost/" + image) tag "iso" ("_build_iso-" + image + ".toml"))
+
+# Builds the way Bazzite builds its own ISOs (live_iso/UPSTREAM.md), with rootless podman: no
+# sudo. Installs the published image ghcr.io/<owner>/<image>:<tag>, after checking its signature
+# with keys/cosign.pub. Needs about 50 GB free and takes an hour or more. Checks out the
+# live_iso/ submodules (Bazzite and Titanoboa, ~140 MB) if they aren't already.
+# Output: output/<image>/live-iso/<image>-live.iso, its .sha256, build-info.txt and build.log.
+# Settings: GITHUB_REPOSITORY_OWNER (default: the origin remote's owner), LIVE_ISO_BASE (the
+# live session, default ghcr.io/ublue-os/bazzite:stable), LIVE_ISO_MIN_FREE_GB (default 50),
+# KEEP_LIVE_ROOT=1 (keep the ~25 GB build container, <image>-live-root, afterwards).
+# Build a live USB installer for a published image
+[group('Install media')]
+build-live-iso $image $tag=default_tag:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [[ "$(id -u)" -eq 0 ]]; then
+        echo "Run this without sudo: it uses your rootless podman." >&2
+        exit 1
+    fi
+    name="${image#localhost/}"
+    if ! grep -Eq "\"name\"[[:space:]]*:[[:space:]]*\"${name}\"" images.json; then
+        echo "Unknown image '${name}': it isn't in images.json." >&2
+        exit 1
+    fi
+    if [[ ! -s keys/cosign.pub ]]; then
+        echo "keys/cosign.pub is missing; the build checks the image's signature with it." >&2
+        exit 1
+    fi
+    # Bazzite's installer and Titanoboa, at the commits this repo pins. --depth 1: with only
+    # .gitmodules' shallow = true, fetching a pinned commit that isn't upstream's branch tip
+    # downloads Bazzite's whole history (~300 MB instead of ~100 MB). Not --recursive: Bazzite's
+    # own submodules (GNOME extensions) aren't needed.
+    if [[ ! -f live_iso/bazzite/installer/build.sh || ! -f live_iso/titanoboa/build_iso.sh ]]; then
+        echo "== Checking out the live_iso/ submodules"
+        git submodule update --init --depth 1 live_iso/bazzite live_iso/titanoboa
+    fi
+
+    # What to install: the published, signed image. The installed system updates from this ref.
+    owner="${GITHUB_REPOSITORY_OWNER:-}"
+    if [[ -z "${owner}" ]]; then
+        owner=$(git remote get-url origin 2>/dev/null | sed -nE 's#^(git@github\.com:|https://github\.com/)([^/]+)/.*#\2#p')
+    fi
+    if [[ -z "${owner}" ]]; then
+        echo "Can't tell the GitHub owner from the origin remote. Set GITHUB_REPOSITORY_OWNER." >&2
+        exit 1
+    fi
+    owner="${owner,,}"
+    payload="ghcr.io/${owner}/${name}:${tag}"
+
+    # The live session: stock Bazzite's desktop image, as on Bazzite's own ISOs
+    base="${LIVE_ISO_BASE:-ghcr.io/ublue-os/bazzite:stable}"
+    flatpaks=kde_flatpaks
+    if [[ "${base}" == *-gnome* ]]; then
+        flatpaks=gnome_flatpaks
+    fi
+    label="${name}-live"
+    label="${label:0:32}" # ISO volume labels are at most 32 characters
+
+    graphroot=$(podman info --format '{{ '{{.Store.GraphRoot}}' }}')
+    free_gb=$(df --output=avail -BG "${graphroot}" | tail -1 | tr -dc '0-9')
+    if ((free_gb < ${LIVE_ISO_MIN_FREE_GB:-50})); then
+        echo "Only ${free_gb} GB free for podman (${graphroot}); this needs about ${LIVE_ISO_MIN_FREE_GB:-50} GB." >&2
+        echo "See what's using it with: podman system df   (override: LIVE_ISO_MIN_FREE_GB=<n>)" >&2
+        exit 1
+    fi
+
+    out_dir="output/${name}/live-iso"
+    mkdir -p "${out_dir}"
+    work=$(mktemp -d -p "${PWD}" -t _build_live-XXXXXXXXXX)
+    live_root="${name}-live-root"
+    cleanup() {
+        rm -rf "${work}"
+        if [[ "${KEEP_LIVE_ROOT:-}" != 1 ]]; then
+            podman rm --ignore --force "${live_root}" >/dev/null || true
+        fi
+    }
+    trap cleanup EXIT
+    exec > >(tee "${out_dir}/build.log") 2>&1
+    echo "== $(date -u +%FT%TZ) Building ${label}.iso: installs ${payload}, live session ${base}"
+
+    # Bazzite's installer folder, our boot menu, our entry script, the signature check and our key
+    src="${work}/src"
+    mkdir -p "${src}" "${work}/info" "${work}/iso"
+    cp -a live_iso/bazzite/installer/. "${src}/"
+    cp live_iso/build-live-root.sh live_iso/trust-payload.sh "${src}/"
+    cp keys/cosign.pub "${src}/cosign.pub"
+    sed -e "s|__LABEL__|${label}|g" -e "s|__NAME__|${name}|g" live_iso/iso.yaml.in >"${src}/iso.yaml"
+
+    echo "== Pulling the live session image"
+    podman pull "${base}"
+    base_ref="${base%:*}@$(podman image inspect --format '{{ '{{.Digest}}' }}' "${base}")"
+
+    # Bazzite's build.sh, in a container that becomes the USB's filesystem. Bazzite's options
+    # plus net_admin, without which Flatpak's post-install triggers are silently skipped.
+    # FLATPAK_GL_DRIVERS=default: don't add a GL extension for this host's NVIDIA driver.
+    echo "== $(date -u +%T) Building the live system in container ${live_root}"
+    podman rm --ignore --force "${live_root}" >/dev/null
+    podman run --name "${live_root}" \
+        --cap-add sys_admin --cap-add net_admin --security-opt label=disable \
+        -e BASE_IMAGE="${base_ref}" \
+        -e INSTALL_IMAGE_PAYLOAD="${payload}" \
+        -e FLATPAK_DIR_SHORTNAME="${flatpaks}" \
+        -e PAYLOAD_VENDOR="${owner}" \
+        -e FLATPAK_GL_DRIVERS=default \
+        -v "${src}:/src:ro" -v "${work}/info:/info" \
+        --entrypoint /src/build-live-root.sh \
+        "${base_ref}"
+    payload_digest=$(cat "${work}/info/payload-digest")
+    flatpak_list=$(cat "${work}/info/flatpaks")
+
+    # Titanoboa reads the container's files through a mount; podman unshare makes that work
+    # rootless.
+    echo "== $(date -u +%T) Making the ISO (the squashfs compression is the slow part)"
+    podman unshare bash -euo pipefail -c '
+        root=$(podman mount "$1")
+        trap "podman umount \"$1\" >/dev/null" EXIT
+        podman run --rm \
+            --cap-add sys_admin --security-opt label=disable \
+            -v "$2:/src/build_iso.sh:ro" -v "${root}:/rootfs:ro" -v "$3:/output" \
+            "$4" /src/build_iso.sh
+    ' _ "${live_root}" "${PWD}/live_iso/titanoboa/build_iso.sh" "${work}/iso" "{{ live_iso_builder }}"
+    iso="${out_dir}/${label}.iso"
+    mv -f "${work}/iso/${label}.iso" "${iso}"
+    (cd "${out_dir}" && sha256sum "${label}.iso" >"${label}.iso.sha256")
+
+    repo_commit="$(git rev-parse HEAD)"
+    if ! git diff --quiet HEAD -- live_iso keys; then
+        repo_commit+=", with uncommitted changes in live_iso/ or keys/"
+    fi
+    {
+        echo "Built:             $(date -u +%FT%TZ)"
+        echo "ISO:               ${label}.iso"
+        echo "SHA-256:           $(cut -d' ' -f1 "${iso}.sha256")"
+        echo "Installs:          ${payload}"
+        echo "Payload digest:    ${payload_digest} (signature checked with keys/cosign.pub)"
+        echo "Live session:      ${base_ref}"
+        echo "ISO builder:       {{ live_iso_builder }}"
+        echo "This repo:         ${repo_commit}"
+        echo "Bazzite installer: ublue-os/bazzite $(git -C live_iso/bazzite rev-parse HEAD)"
+        echo "Titanoboa:         ublue-os/titanoboa $(git -C live_iso/titanoboa rev-parse HEAD)"
+        echo
+        echo "Flatpaks on the USB stick (copied to the installed system):"
+        echo "${flatpak_list}"
+    } >"${out_dir}/build-info.txt"
+    echo "== Done in $((SECONDS / 60)) min: ${iso} ($(du -h "${iso}" | cut -f1))"
 
 # Needs the qcow2 from `just build-qcow2 <image>`. No sudo: the disk is uploaded
 # into libvirt's default storage pool through libvirt itself. The VM appears in

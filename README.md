@@ -295,7 +295,64 @@ cosign verify --key keys/cosign.pub ghcr.io/micheal-hill/bazzite-swayfx-nvidia:l
 GITHUB_REPOSITORY_OWNER=micheal-hill just build-iso bazzite-swayfx-nvidia
 ```
 Without that variable, `build-iso` makes a local test installer that stays on the image it was
-built from. With it, run step 3 after the first update has installed the published image.
+built from. With it, run step 3 after the first update has installed the published image. For a
+USB stick, the live installer below handles more for you.
+
+### USB installer (live ISO)
+
+`just build-live-iso` makes a bootable USB installer the way Bazzite makes its own ISOs: Bazzite's
+installer recipe plus [Titanoboa](https://github.com/ublue-os/titanoboa). Both are git submodules
+in [live_iso/](live_iso/UPSTREAM.md), pinned to exact commits; the recipe checks them out on first
+use (about 140 MB). So far it's only been tried with `bazzite-swayfx-nvidia`.
+
+```bash
+just build-live-iso bazzite-swayfx-nvidia
+```
+
+- **No sudo:** it runs with your rootless podman. Run it on the host, from this folder.
+- **Needs:** about 50 GB free, a network connection (about 10 GB of downloads: stock Bazzite, the
+  published image and the Flatpaks), and an hour or more. It stops early if there isn't enough
+  space.
+- **Output** in `output/<image>/live-iso/`:
+  - `<image>-live.iso`, probably over 10 GB, so use a 16 GB stick;
+  - its `.sha256`;
+  - `build-info.txt`, listing the image digests, this repo's commit and the Flatpak versions it used;
+  - `build.log`.
+
+  The ~25 GB build container (`<image>-live-root`) is deleted afterwards; `KEEP_LIVE_ROOT=1`
+  keeps it.
+
+**What's on the stick:**
+- The live session is stock Bazzite's KDE desktop, not this image. It's for installing and
+  troubleshooting, not for trying SwayFX.
+- The installer is Anaconda. It installs `ghcr.io/micheal-hill/<image>:latest` from a copy on the
+  stick, so installing needs no network.
+- The build only accepts that copy if it's signed with [keys/cosign.pub](keys/cosign.pub).
+- After installing, the system already checks signatures on updates, so the two `bootc switch`
+  steps above aren't needed.
+- Bazzite's KDE Flatpaks (Firefox, Okular, Gwenview, Flatseal, ProtonPlus and others) are on the
+  stick and copied to the new system.
+- The stick boots with Secure Boot on: the live session uses Fedora's signed kernel.
+- The installer still says "Bazzite" in places.
+
+**Write the stick** with Fedora Media Writer ("Select .iso file"), or with `dd`, replacing
+`/dev/sdX` with the stick (`lsblk` shows it):
+```bash
+sudo dd if=output/bazzite-swayfx-nvidia/live-iso/bazzite-swayfx-nvidia-live.iso of=/dev/sdX bs=4M status=progress conv=fsync
+```
+
+**Install:**
+1. Boot from the stick and pick *Install bazzite-swayfx-nvidia*.
+2. Install from the welcome dialog.
+3. With Secure Boot on, the first reboot shows a blue MokManager screen. Choose *Enroll MOK* and
+   enter the password `universalblue` to trust Universal Blue's kernel key.
+4. `bootc status` should then show the signed `ghcr.io/micheal-hill/<image>:latest`.
+
+**Reproducing a build:**
+- `build-info.txt` records what went in.
+- The upstream code and the Fedora image that builds the ISO are pinned.
+- Stock Bazzite's `stable` tag, the published image's `latest` tag, Fedora packages and Flathub
+  apps change over time. Rebuilding later gives a newer stick.
 
 ### One-time setup on the Dell Precision 5510
 
