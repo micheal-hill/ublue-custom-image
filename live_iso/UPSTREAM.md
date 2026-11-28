@@ -37,6 +37,11 @@ Dependabot opens a pull request each month that moves a submodule to the newest 
 files the build uses before merging. You can also bump a submodule by hand: Titanoboa is best kept
 at the commit Bazzite's `.github/workflows/build_iso.yml` pins.
 
+Claude comments on each Dependabot pull request (`.github/workflows/dependabot-review.yml`). For a
+submodule bump, `.github/scripts/submodule-bump-context.sh` diffs the files the build uses (the
+table above) and Bazzite's Titanoboa pin, and Claude summarises that against our files. Its comment
+is a starting point: the steps below still apply when the files the build uses change.
+
 1. Fetch both commits and review the change:
    ```bash
    git -C live_iso/bazzite fetch --depth 1 origin <old> <new>
@@ -46,6 +51,3 @@ at the commit Bazzite's `.github/workflows/build_iso.yml` pins.
 2. To bump by hand: `git -C live_iso/bazzite checkout --detach <new>`, then
    `git add live_iso/bazzite` and commit.
 3. Build and test the ISO in a VM before using it.
-
-**To do:** look into having Claude review Dependabot's submodule pull requests automatically,
-summarising the diff of the files the build uses.
