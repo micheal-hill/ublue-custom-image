@@ -1,0 +1,13 @@
+# Boot menu of the live USB (Titanoboa reads it from /usr/lib/bootc-image-builder/iso.yaml).
+# `just build-live-iso` replaces Bazzite's installer/iso.yaml with this, filling in __LABEL__
+# (the ISO volume label, which root=live:CDLABEL= must match) and __NAME__ (the image name).
+label: "__LABEL__"
+grub2:
+  timeout: 5
+  entries:
+    - name: "Install __NAME__"
+      linux: "/images/pxeboot/vmlinuz quiet rhgb root=live:CDLABEL=__LABEL__ enforcing=0 rd.live.image"
+      initrd: "/images/pxeboot/initrd.img"
+    - name: "Install __NAME__ (Basic Graphics Mode)"
+      linux: "/images/pxeboot/vmlinuz quiet rhgb root=live:CDLABEL=__LABEL__ enforcing=0 rd.live.image nomodeset"
+      initrd: "/images/pxeboot/initrd.img"

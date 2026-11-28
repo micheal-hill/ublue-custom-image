@@ -1,0 +1,10 @@
+[submodule "live_iso/bazzite"]
+	path = live_iso/bazzite
+	url = https://github.com/ublue-os/bazzite.git
+	branch = main
+	shallow = true
+[submodule "live_iso/titanoboa"]
+	path = live_iso/titanoboa
+	url = https://github.com/ublue-os/titanoboa.git
+	branch = main
+	shallow = true

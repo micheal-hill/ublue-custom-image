@@ -9,3 +9,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+  # The live ISO's upstream code (live_iso/bazzite, live_iso/titanoboa). Dependabot proposes the
+  # newest commit on each submodule's branch; see live_iso/UPSTREAM.md for reviewing a bump.
+  - package-ecosystem: "gitsubmodule"
+    directory: "/"
+    schedule:
+      interval: "monthly"
